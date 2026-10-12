@@ -98,7 +98,8 @@ def pipeline() -> None:
     ])
 
     models = [
-        LogisticRegression(solver='liblinear'),
+        # liblinear не поддерживает многоклассовую классификацию в новых sklearn
+        LogisticRegression(solver='lbfgs', max_iter=1000),
         RandomForestClassifier(),
         SVC()
     ]

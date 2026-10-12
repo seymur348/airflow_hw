@@ -13,6 +13,7 @@ sys.path.insert(0, path)
 
 from modules.pipeline import pipeline
 from modules.predict import predict
+from modules.validate import validate_data
 
 args = {
     'owner': 'airflow',
@@ -28,6 +29,11 @@ with DAG(
         catchup=False            # чтобы не запускался за прошлые даты
 ) as dag:
 
+    validate_task = PythonOperator(
+        task_id='validate_data',
+        python_callable=validate_data,
+    )
+
     pipeline_task = PythonOperator(
         task_id='pipeline',
         python_callable=pipeline,
@@ -38,5 +44,5 @@ with DAG(
         python_callable=predict,
     )
 
-    pipeline_task >> predict_task
+    validate_task >> pipeline_task >> predict_task
 

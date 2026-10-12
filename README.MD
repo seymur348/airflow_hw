@@ -5,18 +5,19 @@
 
 ## Как это работает
 
-DAG `car_price_prediction` запускается каждый день в 00:15 (`15 0 * * *`) и состоит из двух задач:
+DAG `car_price_prediction` запускается каждый день в 00:15 (`15 0 * * *`) и состоит из трёх задач:
 
 ```
-pipeline  >>  predict
+validate_data  >>  pipeline  >>  predict
 ```
 
-| Задача     | Файл                  | Что делает                                                                 |
-|------------|-----------------------|----------------------------------------------------------------------------|
+| Задача          | Файл                  | Что делает                                                                 |
+|-----------------|-----------------------|----------------------------------------------------------------------------|
+| `validate_data` | `modules/validate.py` | проверяет обучающую таблицу: колонки, число строк, целевая колонка, пропуски |
 | `pipeline` | `modules/pipeline.py` | читает `data/train/homework.csv`, обучает модели, сохраняет лучшую в pkl    |
 | `predict`  | `modules/predict.py`  | берёт последнюю модель, читает `data/test/*.json`, пишет `prediction.csv`   |
 
-`predict` стартует только после успешного завершения `pipeline`.
+Каждая следующая задача стартует только после успеха предыдущей: если данные не прошли проверку, модель не переобучается.
 При сбое Airflow делает одну повторную попытку через 1 минуту (`retries=1`, `retry_delay=1 min`).
 `catchup=False`: пропущенные даты с 2022 года не догоняются.
 
@@ -39,21 +40,29 @@ pipeline  >>  predict
 ```
 airflow_hw/
 ├── dags/hw_dag.py          # описание DAG
+├── modules/validate.py     # проверка качества данных
 ├── modules/pipeline.py     # обучение
 ├── modules/predict.py      # прогноз
-└── data/                   # создаётся локально, в git не хранится (кроме примера prediction.csv)
+├── scripts/make_sample_data.py  # генератор синтетических данных
+├── tests/test_modules.py   # pytest-тесты
+├── requirements.txt
+├── Dockerfile, docker-compose.yml
+└── data/
     ├── train/homework.csv  # обучающая таблица с колонкой price_category
     ├── test/*.json         # объявления для прогноза
-    ├── models/             # сохранённые модели
+    ├── models/             # сохранённые модели (в git не хранятся)
     └── predictions/        # результат
 ```
 
-Папка `data` в `.gitignore`: обучающие данные, тестовые файлы и модели нужно положить локально.
+**Важно: `data/train/homework.csv` и `data/test/*.json` в репозитории синтетические.** Их создаёт
+`scripts/make_sample_data.py`, они нужны только для проверки, что конвейер работает.
+Метрики на них ничего не говорят о реальной модели. Для настоящих результатов положите свой `homework.csv`
+с теми же колонками и тестовые JSON-файлы.
 
 ## Запуск
 
 ```bash
-pip install apache-airflow pandas scikit-learn dill
+pip install -r requirements.txt
 export PROJECT_PATH=~/airflow_hw
 export AIRFLOW__CORE__DAGS_FOLDER=$PROJECT_PATH/dags
 mkdir -p $PROJECT_PATH/data/models
@@ -63,15 +72,30 @@ airflow dags trigger car_price_prediction   # ручной запуск
 ```
 
 DAG использует `airflow.providers.standard.operators.python` (Airflow 3).
+Проверено запуском `airflow dags test car_price_prediction` на Airflow 3.3.2 и Python 3.13: все три задачи в статусе success.
 
-Без Airflow обе задачи можно проверить из корня проекта:
+Без Airflow задачи можно проверить из корня проекта:
 
 ```bash
+python scripts/make_sample_data.py   # только если нет своих данных
+python modules/validate.py
 python modules/pipeline.py
 python modules/predict.py
+pytest tests
 ```
 
+### Docker
+
+```bash
+docker compose up --build
+```
+
+Интерфейс Airflow будет на http://localhost:8080 (логин `admin`, пароль печатается в логе контейнера).
+Docker-файлы не запускались в среде разработки, где проект проверялся, их нужно проверить у себя.
+
 ## Пример результата
+
+Файл `data/predictions/prediction.csv` в репозитории — результат прежнего запуска на реальных данных:
 
 ```csv
 car_id,pred
@@ -79,9 +103,17 @@ car_id,pred
 7316152972,medium
 ```
 
+Запуск на синтетических данных из репозитория дал такие accuracy (4-кратная кросс-валидация):
+LogisticRegression 0,821; SVC 0,789; RandomForest 0,766. Лучшая модель — LogisticRegression.
+Цифры показывают только, что конвейер работает, а не качество на реальных данных.
+
+## Изменения совместимости
+
+`LogisticRegression(solver='liblinear')` в новых версиях scikit-learn не поддерживает три класса и падает.
+В `pipeline.py` заменено на `solver='lbfgs', max_iter=1000`.
+
 ## Что можно улучшить
 
-- задача проверки качества данных перед обучением;
 - уведомление о сбое (почта или Telegram);
 - запуск Airflow в Docker;
 - не переобучать модель, если данные не изменились.
