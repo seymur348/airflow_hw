@@ -5,8 +5,8 @@ import sys
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
-# путь к проекту
-path = os.path.expanduser('~/airflow_hw')
+# путь к проекту: берём из PROJECT_PATH, иначе ~/airflow_hw
+path = os.environ.get('PROJECT_PATH', os.path.expanduser('~/airflow_hw'))
 
 os.environ['PROJECT_PATH'] = path
 sys.path.insert(0, path)
